@@ -478,7 +478,7 @@ static int muse_create(const char *path, mode_t mode, struct fuse_file_info *fi)
 	FIND_NEW_REAL(path);
 	res=open(np, fi->flags, 0);
 	if (res<0) return -errno;
-	chowner(path,mode);
+	chowner(np,mode);
 	fi->fh=res;
 	return 0;
 }
