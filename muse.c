@@ -1,3 +1,22 @@
+/*
+ * MUSE filesystem
+ *
+ * Copyright (c) 2005-2006 Karel Tuma, leet.cz.
+ * 
+ * This program is free software; you can redistribute it and/or
+ * modify it under the terms of the GNU General Public License
+ * as published by the Free Software Foundation; either version 2
+ * of the License, or (at your option) any later version.
+ * 
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ */
+
+/* free space threshold for full search */
+static	unsigned long m_minfree=1024*1024*1024LL;
+
 #define FUSE_USE_VERSION 26
 #ifdef HAVE_CONFIG_H
 #include <config.h>
@@ -40,7 +59,6 @@ struct plist {
 
 static	unsigned long m_bsize=4096;
 static	unsigned long m_namemax=256;
-static	unsigned long m_minfree=1024*1024*1024;
 
 /* path list */
 static	char *rlist[MAXDIRS];
