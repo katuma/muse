@@ -15,7 +15,7 @@
  */
 
 /* free space threshold for full search */
-static	unsigned long m_minfree=1024*1024*1024LL;
+static	unsigned long m_minfree=8*1024*1024*1024LL;
 
 #define FUSE_USE_VERSION 26
 #ifdef HAVE_CONFIG_H
@@ -513,7 +513,7 @@ static int muse_statfs(const char *path, struct statvfs *stb)
 
 	memset(stb, 0, sizeof(*stb));
 	FOR_EACH_REAL(path) {
-		if (statvfs(elm, &st)) return -errno;
+		if (statvfs(elm, &st)) continue;
 		stb->f_blocks+=(st.f_blocks*st.f_bsize);
 		stb->f_bfree+=(rfree[idx]=(st.f_bfree*st.f_bsize));
 		stb->f_bavail+=(st.f_bavail*st.f_bsize);
@@ -521,6 +521,7 @@ static int muse_statfs(const char *path, struct statvfs *stb)
 		stb->f_ffree+=st.f_ffree;
 		stb->f_favail+=st.f_favail;
 	}
+	errno=0;
 	stb->f_bsize=m_bsize;
 	stb->f_frsize=m_bsize;
 	stb->f_blocks/=m_bsize;
