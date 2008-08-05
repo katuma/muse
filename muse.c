@@ -51,7 +51,11 @@ struct plist {
 
 #define MAXDIRS 64
 
+#if 1
 #define D(a...) { int es=errno; fprintf(stderr, a); fprintf(stderr, "\n"); errno=es; }
+#else
+#define D(x...) {}
+#endif
 
 /********************************************
  * globals
@@ -183,6 +187,17 @@ static int find_new_real(const char *old, char *buf)
 	errno=0;
 	return 0;
 }
+
+static void chowner(const char *path, int mode)
+{
+	struct stat st;
+	gid_t gid = fuse_get_context()->gid;
+	uid_t uid = fuse_get_context()->uid;
+	if (!lstat(path, &st) && st.st_gid!=getgid())
+		gid=st.st_gid;
+	lchown(path, uid, gid);
+	if (mode) chmod(path, mode);
+}
 /********************************************
  * handlers
  ********************************************/
@@ -287,7 +302,7 @@ static int muse_mkdir(const char *path, mode_t mode)
 	//if (np=find_new_real(path))
 	//	return -(errno = EEXIST);
 
-	mkdir(np, mode);
+	if (!mkdir(np, 0)) chowner(np, mode);
 	return -errno;
 }
 
@@ -326,7 +341,7 @@ static int muse_symlink(const char *from, const char *to)
 {
 	FIND_NEW_REAL(to);
 
-	symlink(from, np);
+	if (!symlink(from, np)) chowner(np, 0);
 	return -errno;
 }
 
@@ -423,6 +438,7 @@ static int muse_link(const char *from, const char *to)
 			if (errno == ENOENT || errno == ENOTDIR) continue;
 			return -(errno);
 		}
+		chowner(rto, 0);
 		return 0;
 	}
 
@@ -460,8 +476,9 @@ static int muse_create(const char *path, mode_t mode, struct fuse_file_info *fi)
 {
 	int res;
 	FIND_NEW_REAL(path);
-	res=open(np, fi->flags, mode);
+	res=open(np, fi->flags, 0);
 	if (res<0) return -errno;
+	chowner(path,mode);
 	fi->fh=res;
 	return 0;
 }
