@@ -166,12 +166,15 @@ static int mkdirp_path(const char *path, int srcidx, int dstidx)
 
 static int find_new_real(const char *old, char *buf)
 {
-	int bestdir=-1;
-	int bestfree=0;
+	int bestdir=-1; /* best partition where directory is already in place */
+	int okfree=-1; /* best partition above limit */
+	int bestfree=0; /* best partition (below limit, but most free space) */
 	FOR_EACH_REAL(old) {
 		UPLEVEL(elm);
-		/* figure out where's the most free space */
+		/* figure out best space */
 		if (rfree[idx] > rfree[bestfree]) bestfree=idx;
+		/* figure out enough space */
+		if (okfree < 0 && rfree[idx] > MINFREE) okfree=idx;
 		/* figure out where's the most free space and
 		 * directory already in place */
 		if (access(elm, F_OK)) continue;
@@ -182,10 +185,11 @@ static int find_new_real(const char *old, char *buf)
 	if (bestdir < 0) return -(errno=ENOTDIR);
 
 	/* current dir has not much space && there's better alternative */
-	if ((rfree[bestdir] < MINFREE) && (rfree[bestfree] > MINFREE)) {
-		if (mkdirp_path(old,bestdir,bestfree))
+	if (okfree < 0) okfree=bestfree;
+	if (rfree[bestdir] < MINFREE) {
+		if (mkdirp_path(old,bestdir,okfree))
 			return -errno;
-		bestdir=bestfree;
+		bestdir=okfree;
 	}
 
 	strcpy(buf, rlist[bestdir]);
