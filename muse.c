@@ -25,6 +25,7 @@
 #define _BSD_SOURCE 1
 #include <fuse.h>
 #include <stdio.h>
+#include <stdint.h>
 #include <string.h>
 #include <stdlib.h>
 #include <limits.h>
@@ -55,6 +56,7 @@ struct created_file {
 struct created_file *created_files;
 
 #define MAXDIRS 64
+#define DUPES_MASK 16383
 
 #if DEBUG
 #define D(a...) { int es=errno; fprintf(stderr, "@@@@ " a); fprintf(stderr, "\n"); errno=es; }
@@ -231,13 +233,22 @@ static int muse_readlink(const char *path, char *buf, size_t size)
 	return first_errno;
 }
 
+static uint32_t hash(const char *s)
+{
+	uint32_t h = 5381;
+	while (*s)
+		h = ((h << 5) + h) + *s++;
+	return h;
+}
+
 static int muse_readdir(const char *path, void *buf, fuse_fill_dir_t filler,
 		       off_t offset, struct fuse_file_info *fi)
 {
 	DIR *d;
 	struct dirent *de;
 	int added=0;
-	struct dupeent *dp, *dupes[256] = { NULL };
+	struct dupeent *dp, *dupes[DUPES_MASK+1] = { NULL };
+	uint32_t hk;
 
 	errno=0;
 	D("readdir for %s", path);
@@ -260,7 +271,8 @@ static int muse_readdir(const char *path, void *buf, fuse_fill_dir_t filler,
 			break;
 		}
 		added++;
-#define DHASH dupes[(unsigned char)*de->d_name]
+		hk = hash(de->d_name);
+#define DHASH dupes[hk & DUPES_MASK]
 		while ((de = readdir(d))) {
 			struct stat st;
 			for (dp = DHASH; dp; dp = dp->next) {
