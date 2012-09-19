@@ -1,4 +1,4 @@
-/*
+/* vim: set noexpandtab:
  * MUSE filesystem
  *
  * Copyright (c) 2005-2012 Karel Tuma, karel.tuma@gmail.com.
@@ -15,39 +15,42 @@
  */
 
 /* free space threshold for full search */
-static	unsigned long m_minfree=8*1024*1024*1024LL;
+#define MINFREE (8*1024*1024*1024LL)
+#define SYMLINK_HACK 2
 
 #define FUSE_USE_VERSION 26
-#ifdef HAVE_CONFIG_H
-#include <config.h>
-#endif
-#ifdef linux
 #define _XOPEN_SOURCE 500
-#endif
+#define _BSD_SOURCE 1
 #include <fuse.h>
 #include <stdio.h>
 #include <string.h>
+#include <stdlib.h>
+#include <limits.h>
 #include <unistd.h>
 #include <fcntl.h>
 #include <dirent.h>
 #include <errno.h>
 #include <sys/time.h>
-#ifdef HAVE_SETXATTR
 #include <sys/xattr.h>
-#endif
 #include <utime.h>
 #include <sys/types.h>
 #include <alloca.h>
+#include <signal.h>
 
+/* dupe entries in a directory */
 struct	dupeent {
 	struct dupeent *next;
 	char name[1];
 };
-struct plist {
-	struct	plist *next;
-	int idx;
-	char name[1];
+
+/* freshly created files we should *never* symlink to */
+struct created_file {
+	struct created_file *next;
+	int count;
+	char path[1];
 };
+
+struct created_file *created_files;
 
 #define MAXDIRS 64
 
@@ -68,6 +71,7 @@ static	unsigned long m_namemax=256;
 static	char *rlist[MAXDIRS];
 static	uint64_t rfree[MAXDIRS]; /* free bytes on each path */
 static	int rcount, rmaxlen;
+static 	char *cfg;
 
 /********************************************
  * macros
@@ -75,7 +79,7 @@ static	int rcount, rmaxlen;
 #define PATH_TO_REAL_IDX(path,idx) \
 	char rto[rmaxlen+1+strlen(path)]; \
 	strcpy(rto, rlist[idx]); \
-	strcat(rto, path); 
+	strcat(rto, path);
 
 /* execute statement for each real path of given virtual 'path'.
  * variables:
@@ -166,9 +170,9 @@ static int find_new_real(const char *old, char *buf)
 		UPLEVEL(elm);
 		/* figure out where's the most free space */
 		if (rfree[idx] > rfree[bestfree]) bestfree=idx;
-		if (access(elm, F_OK)) continue;
 		/* figure out where's the most free space and
-		 * directory in place */
+		 * directory already in place */
+		if (access(elm, F_OK)) continue;
 		if (bestdir<0 || rfree[idx] > rfree[bestdir]) bestdir=idx;
 	}
 
@@ -176,7 +180,7 @@ static int find_new_real(const char *old, char *buf)
 	if (bestdir < 0) return -(errno=ENOTDIR);
 
 	/* current dir has not much space && there's better alternative */
-	if ((rfree[bestdir] < m_minfree) && (rfree[bestfree] > m_minfree)) {
+	if ((rfree[bestdir] < MINFREE) && (rfree[bestfree] > MINFREE)) {
 		if (mkdirp_path(old,bestdir,bestfree))
 			return -errno;
 		bestdir=bestfree;
@@ -201,25 +205,19 @@ static void chowner(const char *path, int mode)
 /********************************************
  * handlers
  ********************************************/
-static int muse_getattr(const char *path, struct stat *stbuf)
-{
-	APPLY_FOR_REAL(path, lstat(elm, stbuf));
-}
-
-
-
-static int muse_access(const char *path, int mask)
-{
-	APPLY_FOR_REAL(path, access(elm, mask));
-}
-
 static int muse_readlink(const char *path, char *buf, size_t size)
 {
-	int res;
-
-	APPLY_FOR_REAL_RES(path, res, readlink(elm, buf, size-1));
-	buf[res] = '\0';
-	return 0;
+	int first_errno = 0;
+	FOR_EACH_REAL(path) {
+		struct stat st;
+		if (!lstat(elm, &st)) {
+			// XXX todo *real* links
+			strcpy(buf, elm);
+			return 0;
+		} else if (!first_errno)
+			first_errno = errno;
+	}
+	return first_errno;
 }
 
 static int muse_readdir(const char *path, void *buf, fuse_fill_dir_t filler,
@@ -262,15 +260,28 @@ static int muse_readdir(const char *path, void *buf, fuse_fill_dir_t filler,
 				}
 			}
 			if (dp) continue; /* dupe */
+
+			/* some filesystems dont report .. */
+			if (de->d_type == DT_UNKNOWN) {
+				char tmp[PATH_MAX+1];
+				strcpy(tmp, elm);
+				strcat(tmp, "/");
+				strcat(tmp, de->d_name);
+
+				/* huh? */
+				if (lstat(tmp, &st)) continue;
+			} else {
+				/* its fine, post it */
+				st.st_ino = de->d_ino;
+				st.st_mode = de->d_type << 12; // glibc specific, XXX switch statement?
+			}
+
 			/* new dupe entry */
 			dp = alloca(sizeof(*dp) + strlen(de->d_name));
 			strcpy(dp->name, de->d_name);
 			dp->next = DHASH;
 			DHASH = dp;
 
-			/* its fine, post it */
-			st.st_ino = de->d_ino;
-			st.st_mode = de->d_type << 12;
 			if (filler(buf, de->d_name, &st, 0)) {
 				D("filler fail");
 				closedir(d);
@@ -292,6 +303,8 @@ static int muse_mknod(const char *path, mode_t mode, dev_t rdev)
 		mkfifo(np, mode);
 	else
 		mknod(np, mode, rdev);
+	if (!errno)
+		chowner(np, 0);
 	return -errno;
 }
 
@@ -323,7 +336,6 @@ static int muse_unlink(const char *path)
 	return 0;
 }
 
-
 static int muse_rmdir(const char *path)
 {
 	int count=0;
@@ -346,87 +358,45 @@ static int muse_symlink(const char *from, const char *to)
 }
 
 /*
- * this is the usual madness.
+ * this is possibly broken
  */
 static int muse_rename(const char *from, const char *to)
 {
-	struct stat st;
-	struct plist *p, *rflist = NULL;
-	struct plist *unlist = NULL;
-	int isdir=-1;
-	int tidx=-1;
-	int count;
+	int first_errno;
+	int done = 0;
 
-#define DIRCHK \
-	if (isdir==-1) { \
-		isdir=S_IFDIR&st.st_mode; \
-	} else { \
-		/* found both dir and a file ..*/ \
-		if (isdir != (S_IFDIR&st.st_mode)) return -(errno=EIO); \
-	}
-
-	/* build a list of things to move */
+	/* for each source path */
 	FOR_EACH_REAL(from) {
-		if (lstat(elm, &st)) {
-			int serr=errno;
-			PATH_TO_REAL_IDX(to,idx);
-			/* check the target, it will need to get unlinked */
-			if (!lstat(rto, &st)) {
-				DIRCHK;
-				p=alloca(sizeof(*p)+strlen(rto));
-				p->next=unlist;
-				unlist=p;
-				p->idx=idx;
-				strcpy(p->name,rto);
+		PATH_TO_REAL_IDX(to, idx);
+		if (rename(elm, rto)) {
+			int i;
+			struct stat st;
+			char tmp[PATH_MAX+1];
+			/* source object not present, just skip it. */
+			if (lstat(elm, &st)) {
+				if (errno == ENOENT) continue;
+				if (!first_errno) first_errno = errno;
 			}
 
-			if (serr == ENOENT || serr == ENOTDIR) continue;
-			return -(errno=serr);
-		}
-		DIRCHK;
-		p=alloca(sizeof(*p)+strlen(elm));
-		p->next=rflist;
-		p->idx=idx;
-		rflist=p;
-		strcpy(p->name,elm);
-	}
+			/* try to create full path at destination */
+			strcpy(tmp, to);
+			UPLEVEL(tmp);
+			for (i = 0; i < rcount; i++)
+				if (!mkdirp_path(tmp, i, idx)) break;
 
-	/* nothing to move .. */
-	if (!rflist) return -(errno=ENOENT);
+			/* something failed along the way? */
+			if (i == rcount) continue;
 
-	/* ok, rename it. XXX TODO some locking?
-	 * XXX what if renaming fails halfway through?!*/
-	for (count=0,p = rflist; p; p = p->next) {
-		errno=0;
-		PATH_TO_REAL_IDX(to,p->idx);
-		if (!rename(p->name, rto)) { count++; continue; };
-		/* target path missing?*/
-		if (errno == ENOTDIR || errno == ENOENT) {
-			/* find out new template */
-			if (tidx<0) {
-				FOR_EACH_REAL(to) {
-					UPLEVEL(elm);
-					if (!lstat(elm, &st)) { tidx=idx; break; };
-				}
+			/* ok, retry the rename. it should succeed this time. */
+			if (!rename(elm, rto)) {
+				done++;
+			} else {
+				if (!first_errno) first_errno = errno;
 			}
-			D("to=%s tidx=%d p->idx=%d",to,tidx,p->idx);
-			/* return 1 in case we had to create something */
-			if (!mkdirp_path(to,tidx,p->idx))
-				if (!rename(p->name, rto)) count++;
-		} 
+		} else done++;
 	}
-	if (!count) return -(errno);
-
-	errno=0;
-	/* colliding name, remove. */
-	for (p = unlist; p; p=p->next) {
-		if (isdir) {
-			rmdir(p->name);
-		} else {
-			unlink(p->name);
-		}
-	}
-	return -(errno);
+	if (done) return 0;
+	return first_errno==0?-EIO:-first_errno;
 }
 
 
@@ -472,15 +442,48 @@ static int muse_utimens(const char *path, const struct timespec ts[2])
 	APPLY_FOR_REAL(path, utimes(elm, tv));
 }
 
+
 static int muse_create(const char *path, mode_t mode, struct fuse_file_info *fi)
 {
 	int res;
+	struct created_file *ce;
 	FIND_NEW_REAL(path);
-	res=open(np, fi->flags, 0);
+	res=open(np, fi->flags, mode);
 	if (res<0) return -errno;
-	chowner(np,mode);
+	chowner(np, 0);
+
+#if SYMLINK_HACK
+	ce = malloc(sizeof(ce) + strlen(path));
+	ce->next = created_files;
+	created_files = ce;
+	ce->count = 1;
+	strcpy(ce->path, path);
+#endif
 	fi->fh=res;
 	return 0;
+}
+
+/* Fuse kernel part is retarded. Whenever it detects that opened
+   file has changed under its hands, it'll stubbornly return -EIO.
+   Hence, we'll track newly created files and won't dare to symlink
+   em until kernel releases all the references. Sheesh.
+ */
+static struct created_file *find_cf(const char *path, int inc)
+{
+	struct created_file *ce, *prev;
+	for (ce = created_files, prev = NULL; ce; ce = ce->next) {
+		if (!strcmp(path, ce->path)) {
+			ce->count += inc;
+			if (ce->count > 0) return ce;
+			if (!prev)
+				created_files = ce->next;
+			else
+				prev->next = ce->next;
+			return NULL;
+		}
+		prev = ce;
+	}
+	return NULL;
 }
 
 static int muse_open(const char *path, struct fuse_file_info *fi)
@@ -488,6 +491,7 @@ static int muse_open(const char *path, struct fuse_file_info *fi)
 	int res;
 	APPLY_FOR_REAL_RES(path, res, open(elm, fi->flags));
 	fi->fh = res;
+	find_cf(path, 1);
 	return 0;
 }
 
@@ -505,6 +509,18 @@ static int muse_write(const char *path, const char *buf, size_t size,
 	int res = pwrite(fi->fh, buf, size, offset);
 	if (res<0) return -errno;
 	return res;
+}
+
+static int muse_fsync(const char *path, int isdatasync,
+		     struct fuse_file_info *fi)
+{
+	int res;
+	if (isdatasync)
+		res=fdatasync(fi->fh);
+	else
+		res=fsync(fi->fh);
+	if (res<0) return -(errno);
+	return 0;
 }
 
 static int muse_statfs(const char *path, struct statvfs *stb)
@@ -533,24 +549,12 @@ static int muse_statfs(const char *path, struct statvfs *stb)
 
 static int muse_release(const char *path, struct fuse_file_info *fi)
 {
+	find_cf(path, -1);
 	if (close(fi->fh))
 		return -(errno);
 	return 0;
 }
 
-static int muse_fsync(const char *path, int isdatasync,
-		     struct fuse_file_info *fi)
-{
-	int res;
-	if (isdatasync)
-		res=fdatasync(fi->fh);
-	else
-		res=fsync(fi->fh);
-	if (res<0) return -(errno);
-	return 0;
-}
-
-#ifdef HAVE_SETXATTR
 static int muse_setxattr(const char *path, const char *name, const char *value,
 			size_t size, int flags)
 {
@@ -572,7 +576,37 @@ static int muse_removexattr(const char *path, const char *name)
 {
 	APPLY_FOR_REAL(path, lremovexattr(elm, name));
 }
-#endif /* HAVE_SETXATTR */
+
+static int muse_getattr(const char *path, struct stat *st)
+{
+	int first_errno = 0;
+	FOR_EACH_REAL(path) {
+		if (lstat(elm, st)) {
+			if (errno == ENOENT)
+				continue;
+			if (!first_errno)
+				first_errno = errno;
+			continue;
+		}
+#if SYMLINK_HACK
+		/* this will hopefully force kernel to route us through readlink() */
+		if (S_ISREG(st->st_mode) && !find_cf(path, 0)) {
+			st->st_mode &= S_IFMT;
+			st->st_mode |= S_IFLNK;
+		}
+#endif
+		return 0;
+	}
+	return first_errno==0?-ENOENT:-first_errno;
+}
+
+
+
+static int muse_access(const char *path, int mask)
+{
+	APPLY_FOR_REAL(path, access(elm, mask));
+}
+
 
 static struct fuse_operations muse_oper = {
 	.getattr	= muse_getattr,
@@ -594,40 +628,51 @@ static struct fuse_operations muse_oper = {
 	.create		= muse_create,
 	.read		= muse_read,
 	.write		= muse_write,
+	.fsync		= muse_fsync,
 	.statfs		= muse_statfs,
 	.release	= muse_release,
-	.fsync		= muse_fsync,
-#ifdef HAVE_SETXATTR
 	.setxattr	= muse_setxattr,
 	.getxattr	= muse_getxattr,
 	.listxattr	= muse_listxattr,
 	.removexattr	= muse_removexattr,
-#endif
 };
 
-int main(int argc, char *argv[])
+void reread_config(int d)
 {
-	FILE *f;
-	char ln[2048];
-
-	umask(0);
-	printf("MUSE filesystem 1.1\n(c)2008-2012 kt@leet.cz\n\n");
-	if (argc < 3) {
-		fprintf(stderr, "Usage:\n%s dirlist.txt /mountpoint [..fuse opts]\n"
-			"dirlist is a newline separated list of directories to use\n\n",
-			argv[0]);
-		return 1;
-	}
-	f = fopen(argv[1], "rt");
-	if (!f) { perror(argv[1]); return 2; };
+	char ln[PATH_MAX+1];
+	char *rlist_new[MAXDIRS];
+	int rc = 0;
+	FILE *f = fopen(cfg, "rt");
+	if (!f && d==-1) { perror(cfg); exit(2); };
 	while (fgets(ln, sizeof(ln)-1, f)) {
 		char *p = strchr(ln, '\n');
 		if (p) *p = 0;
-		if (chdir(ln)) { perror(ln); return 3; };
-		if (rcount>=MAXDIRS) { fprintf(stderr, "Too many directories (limit %d)\n", MAXDIRS); return 4; };
-		rlist[rcount++] = strdup(ln);
+		if (d==-1 && chdir(ln)) { perror(ln); exit(3); };
+		if (d==-1 && rc>=MAXDIRS) { fprintf(stderr, "Too many directories (limit %d)\n", MAXDIRS); exit(4); };
+		rlist_new[rc++] = strdup(ln);
 		if (strlen(ln) > rmaxlen) rmaxlen = strlen(ln);
 	}
+	fclose(f);
+	rcount = rc;
+	memcpy(rlist, rlist_new, sizeof(rlist));
+}
+
+
+int main(int argc, char *argv[])
+{
+
+	umask(0);
+	printf("MUSE filesystem 1.1\n2008-2012 karel.tuma@gmail.com\n\n");
+	if (argc < 3) {
+		fprintf(stderr, "Usage:\n%s dirlist.txt /mountpoint -o allow_other,default_permissions \n\n"
+			"- dirlist is a newline separated list of directories to use\n"
+			"- send SIGHUP to the running processs to reread the list\n\n",
+			argv[0]);
+		return 1;
+	}
+	cfg = argv[1];
+	reread_config(-1);
+	signal(SIGHUP, reread_config);
 	return fuse_main(argc-1, argv+1, &muse_oper, NULL);
 }
 

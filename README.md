@@ -19,7 +19,7 @@ How to use it
 Compile it, you may have to fiddle with the makefile, especially on systems
 other than Linux. Then:
 
-    ./muse -o allow_other,default_permissions dirlist.txt /mnt/muse
+    ./muse dirlist.txt /mnt/muse -o allow_other,default_permissions
 
 dirlist.txt is just plain text with line-separated list of directories, for example:
 
