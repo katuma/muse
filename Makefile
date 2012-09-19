@@ -1,4 +1,4 @@
-CFLAGS=-O2 -ggdb -Wall -D_FILE_OFFSET_BITS=64 -DHAVE_SETXATTR -I/usr/include/fuse
+CFLAGS=-O0 -DDEBUG=0 -ggdb -Wall -D_FILE_OFFSET_BITS=64 -DHAVE_SETXATTR -I/usr/include/fuse
 LDFLAGS=-pthread -lfuse -lrt -ldl
 CC=gcc
 

@@ -57,7 +57,7 @@ struct created_file *created_files;
 #define MAXDIRS 64
 
 #if DEBUG
-#define D(a...) { int es=errno; fprintf(stderr, a); fprintf(stderr, "\n"); errno=es; }
+#define D(a...) { int es=errno; fprintf(stderr, "@@@@ " a); fprintf(stderr, "\n"); errno=es; }
 #else
 #define D(x...) {}
 #endif
@@ -169,8 +169,10 @@ static int find_new_real(const char *old, char *buf)
 	int bestdir=-1; /* best partition where directory is already in place */
 	int okfree=-1; /* best partition above limit */
 	int bestfree=0; /* best partition (below limit, but most free space) */
+	D("find new %s", old);
 	FOR_EACH_REAL(old) {
 		UPLEVEL(elm);
+		D("check %s\n", elm);
 		/* figure out best space */
 		if (rfree[idx] > rfree[bestfree]) bestfree=idx;
 		/* figure out enough space */
@@ -187,7 +189,10 @@ static int find_new_real(const char *old, char *buf)
 	/* current dir has not much space && there's better alternative */
 	if (okfree < 0) okfree=bestfree;
 	if (rfree[bestdir] < MINFREE) {
-		if (mkdirp_path(old,bestdir,okfree))
+		char tmp[PATH_MAX+1];
+		strcpy(tmp, old);
+		UPLEVEL(tmp);
+		if (mkdirp_path(tmp,bestdir,okfree))
 			return -errno;
 		bestdir=okfree;
 	}
@@ -321,7 +326,10 @@ static int muse_mkdir(const char *path, mode_t mode)
 	//if (np=find_new_real(path))
 	//	return -(errno = EEXIST);
 
-	if (!mkdir(np, 0)) chowner(np, mode);
+	if (!mkdir(np, 0)) {
+		chowner(np, mode);
+		return 0;
+	}
 	return -errno;
 }
 
