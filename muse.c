@@ -14,9 +14,11 @@
  * GNU General Public License for more details.
  */
 
-/* free space threshold for full search */
+/* free space threshold for full search (8GB default) */
 #define MINFREE (8*1024*1024*1024LL)
-#define SYMLINK_HACK 2
+
+/* use symlinks */
+#define SYMLINK_HACK 1
 
 #define FUSE_USE_VERSION 26
 #define _XOPEN_SOURCE 500
@@ -54,7 +56,7 @@ struct created_file *created_files;
 
 #define MAXDIRS 64
 
-#if 1
+#if DEBUG
 #define D(a...) { int es=errno; fprintf(stderr, a); fprintf(stderr, "\n"); errno=es; }
 #else
 #define D(x...) {}
@@ -362,7 +364,7 @@ static int muse_symlink(const char *from, const char *to)
  */
 static int muse_rename(const char *from, const char *to)
 {
-	int first_errno;
+	int first_errno=0;
 	int done = 0;
 
 	/* for each source path */
