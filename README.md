@@ -19,17 +19,14 @@ How to use it
 Compile it, you may have to fiddle with the makefile, especially on systems
 other than Linux. Then:
 
-./muse dirlist.txt /mnt/muse
-
-TIP: append "-o allow_other,default_permissions" to the command to make it
-behave just like usual multiuser filesystem (you've to mount as root).
-Also ulimit -n is not a bad idea either.
-
+    ./muse -o allow_other,default_permissions dirlist.txt /mnt/muse
 
 dirlist.txt is just plain text with line-separated list of directories, for example:
-/mnt/sda1
-/mnt/sdb1
-/mnt/sdc1
+
+    /mnt/sda1
+    /mnt/sdb1
+    /mnt/sdc1
+    ...
 
 How is it decided where is what
 -------------------------------
@@ -52,5 +49,4 @@ What's broken?
 - The whole thing is not really well tested. DO NOT USE FOR IMPORTANT DATA.
   DATA LOSS IS GUARANTEED.
 - rename() is somewhat racy, it might just die in the middle.
-- If you'll fix something, commit to ssh://repo.or.cz/srv/git/muse.git under mob branch.
-
+- If you'll fix something, please send a pull request.
