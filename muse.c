@@ -458,7 +458,7 @@ static int muse_create(const char *path, mode_t mode, struct fuse_file_info *fi)
 	chowner(np, 0);
 
 #if SYMLINK_HACK
-	ce = malloc(sizeof(ce) + strlen(path));
+	ce = malloc(sizeof(*ce) + strlen(path));
 	ce->next = created_files;
 	created_files = ce;
 	ce->count = 1;
@@ -484,6 +484,7 @@ static struct created_file *find_cf(const char *path, int inc)
 				created_files = ce->next;
 			else
 				prev->next = ce->next;
+			free(ce);
 			return NULL;
 		}
 		prev = ce;
