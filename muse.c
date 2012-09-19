@@ -410,7 +410,6 @@ static int muse_link(const char *from, const char *to)
 			if (errno == ENOENT || errno == ENOTDIR) continue;
 			return -(errno);
 		}
-		chowner(rto, 0);
 		return 0;
 	}
 
