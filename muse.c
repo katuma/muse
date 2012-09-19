@@ -271,9 +271,9 @@ static int muse_readdir(const char *path, void *buf, fuse_fill_dir_t filler,
 			break;
 		}
 		added++;
-		hk = hash(de->d_name);
 #define DHASH dupes[hk & DUPES_MASK]
 		while ((de = readdir(d))) {
+			hk = hash(de->d_name);
 			struct stat st;
 			for (dp = DHASH; dp; dp = dp->next) {
 				/* dupe found? */
