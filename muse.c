@@ -611,7 +611,7 @@ int main(int argc, char *argv[])
 	char ln[2048];
 
 	umask(0);
-	printf("MUSE filesystem 0.1\n(c)2008 kt@leet.cz\n\n");
+	printf("MUSE filesystem 1.1\n(c)2008-2012 kt@leet.cz\n\n");
 	if (argc < 3) {
 		fprintf(stderr, "Usage:\n%s dirlist.txt /mountpoint [..fuse opts]\n"
 			"dirlist is a newline separated list of directories to use\n\n",
