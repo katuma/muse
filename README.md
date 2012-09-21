@@ -7,6 +7,11 @@ Why...
 ------
 .. aren't there plenty of unioning filesystems already?
 
+Well, perhaps. The closest thing to this is mhddfs, which is getting
+really slow on bigger disk clusters. MUSE is a reimplementation of
+idea while trying perform ok even with really big filesystems.
+(25 volumes, hundreds of terabytes..).
+
 MUSE is not really a COW filesystem, but something more akin to raid0
 array.
 
@@ -18,15 +23,10 @@ It will always try to pick single fs for directory subtree of data,
 until it runs out of free disk space, then it moves to another disk
 unioned.
 
-Well, perhaps. The closest thing to this is mhddfs, which is getting
-really slow on bigger disk clusters. MUSE is a reimplementation of
-idea while trying perform ok even with really big filesystems.
-(25 volumes, hundreds of terabytes..).
-
 It also plays some dirty tricks to maintain reasonable performance.
 In particular, regular files are just symlinks to actual under-fs
 storage. Hence FUSE is avoided for read/writes altogether. However,
-rename() will move the actual file under the symlink though, unlink()
+rename() will move the actual file under the symlink, unlink()
 will delete the real file as well.
 
 
