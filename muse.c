@@ -166,6 +166,30 @@ static int mkdirp_path(const char *path, int srcidx, int dstidx)
 	return (errno=0);
 }
 
+static int find_idx(const char *path)
+{
+	int i;
+	for (i = 0; i < rcount; i++) {
+		char tmp[PATH_MAX+1];
+		strcpy(tmp, rlist[i]);
+		strcat(tmp, "/");
+		if (!strncmp(path, tmp, strlen(tmp)))
+			return i;
+	}
+	return -1;
+}
+
+static int find_dir(const char *path)
+{
+	FOR_EACH_REAL(path) {
+		struct stat st;
+		UPLEVEL(elm);
+		if (lstat(elm, &st) == 0 && S_ISDIR(st.st_mode))
+			return idx;
+	}
+	return -1;
+}
+
 static int find_new_real(const char *old, char *buf)
 {
 	int bestdir=-1; /* best partition where directory is already in place */
@@ -375,11 +399,34 @@ static int muse_rmdir(const char *path)
 	return (errno=0);
 }
 
-static int muse_symlink(const char *from, const char *to)
-{
-	FIND_NEW_REAL(to);
+#define F_LINUX_SPECIFIC_BASE   1024
+#define F_SETCOW    (F_LINUX_SPECIFIC_BASE+3)
 
-	if (!symlink(from, np)) chowner(np, 0);
+static int muse_symlink(const char *contents, const char *symname)
+{
+	int i = find_idx(contents);
+
+	/* When someone makes a copy of our fake symlink, it will
+	   point to an rpath dir. Hard-link the file, possibly
+	   setting up COW if supported */
+	if (i >= 0) {
+		int j = find_dir(symname);
+		char tmp[PATH_MAX+1];
+		int fd;
+		mkdirp_path(symname, j, i);
+		strcpy(tmp, rlist[i]);
+		strcat(tmp, symname);
+		fd = open(contents, O_RDONLY);
+		if (fd >= 0) {
+			fcntl(fd, F_SETCOW, 1);
+			close(fd);
+		}
+		if (link(contents, tmp))
+			return -errno;
+		return 0;
+	}
+	FIND_NEW_REAL(symname);
+	if (!symlink(contents, np)) chowner(np, 0);
 	return -errno;
 }
 
