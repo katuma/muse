@@ -637,9 +637,7 @@ static int muse_statfs(const char *path, struct statvfs *stb)
 
 static int muse_release(const char *path, struct fuse_file_info *fi)
 {
-	LOCK();
 	find_cf(path, -1);
-	UNLOCK();
 	if (close(fi->fh))
 		return -(errno);
 	return 0;
@@ -680,12 +678,10 @@ static int muse_getattr(const char *path, struct stat *st)
 		}
 #if SYMLINK_HACK
 		/* this will hopefully force kernel to route us through readlink() */
-		LOCK();
 		if (S_ISREG(st->st_mode) && !find_cf(path, 0)) {
 			st->st_mode &= S_IFMT;
 			st->st_mode |= S_IFLNK;
 		}
-		UNLOCK();
 #endif
 		return 0;
 	}
