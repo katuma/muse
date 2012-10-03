@@ -39,6 +39,7 @@
 #include <sys/types.h>
 #include <alloca.h>
 #include <signal.h>
+#include <pthread.h>
 
 /* dupe entries in a directory */
 struct	dupeent {
@@ -68,6 +69,7 @@ struct created_file *created_files;
  * globals
  ********************************************/
 
+static pthread_mutex_t lock;
 static	unsigned long m_bsize=4096;
 static	unsigned long m_namemax=256;
 
@@ -80,6 +82,13 @@ static 	char *cfg;
 /********************************************
  * macros
  ********************************************/
+
+#define LOCK() \
+	pthread_mutex_lock(&lock)
+#define UNLOCK() \
+	pthread_mutex_unlock(&lock)
+
+
 #define PATH_TO_REAL_IDX(path,idx) \
 	char rto[rmaxlen+1+strlen(path)]; \
 	strcpy(rto, rlist[idx]); \
@@ -526,10 +535,12 @@ static int muse_create(const char *path, mode_t mode, struct fuse_file_info *fi)
 
 #if SYMLINK_HACK
 	ce = malloc(sizeof(*ce) + strlen(path));
+	strcpy(ce->path, path);
+	ce->count = 1;
+	LOCK();
 	ce->next = created_files;
 	created_files = ce;
-	ce->count = 1;
-	strcpy(ce->path, path);
+	UNLOCK();
 #endif
 	fi->fh=res;
 	return 0;
@@ -543,20 +554,24 @@ static int muse_create(const char *path, mode_t mode, struct fuse_file_info *fi)
 static struct created_file *find_cf(const char *path, int inc)
 {
 	struct created_file *ce, *prev;
+	LOCK();
 	for (ce = created_files, prev = NULL; ce; ce = ce->next) {
 		if (!strcmp(path, ce->path)) {
 			ce->count += inc;
-			if (ce->count > 0) return ce;
+			if (ce->count > 0)
+				break;
 			if (!prev)
 				created_files = ce->next;
 			else
 				prev->next = ce->next;
 			free(ce);
-			return NULL;
+			ce = NULL;
+			break;
 		}
 		prev = ce;
 	}
-	return NULL;
+	UNLOCK();
+	return ce;
 }
 
 static int muse_open(const char *path, struct fuse_file_info *fi)
@@ -622,7 +637,9 @@ static int muse_statfs(const char *path, struct statvfs *stb)
 
 static int muse_release(const char *path, struct fuse_file_info *fi)
 {
+	LOCK();
 	find_cf(path, -1);
+	UNLOCK();
 	if (close(fi->fh))
 		return -(errno);
 	return 0;
@@ -663,10 +680,12 @@ static int muse_getattr(const char *path, struct stat *st)
 		}
 #if SYMLINK_HACK
 		/* this will hopefully force kernel to route us through readlink() */
+		LOCK();
 		if (S_ISREG(st->st_mode) && !find_cf(path, 0)) {
 			st->st_mode &= S_IFMT;
 			st->st_mode |= S_IFLNK;
 		}
+		UNLOCK();
 #endif
 		return 0;
 	}
@@ -733,7 +752,7 @@ void reread_config(int d)
 
 int main(int argc, char *argv[])
 {
-
+	pthread_mutex_init(&lock, NULL);
 	umask(0);
 	printf("MUSE filesystem 1.1\n2008-2012 karel.tuma@gmail.com\n\n");
 	if (argc < 3) {
